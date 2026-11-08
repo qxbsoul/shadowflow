@@ -9,7 +9,7 @@ interface Hit {
 }
 
 export default function Topbar() {
-  const { view, setView, tasks, deliverables, knowledge, openModal } = useWorkbench();
+  const { view, setView, tasks, conversationDeliverables, knowledge, openModal, billing, authStatus } = useWorkbench();
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -29,14 +29,14 @@ export default function Topbar() {
     tasks.forEach(t => {
       if (t.title.toLowerCase().includes(query)) out.push({ k: '定时任务', t: t.title, v: 'tasks' });
     });
-    deliverables.forEach(d => {
-      if (d.title.toLowerCase().includes(query)) out.push({ k: '交付物', t: d.title, v: 'deliverables' });
+    conversationDeliverables.forEach(d => {
+      if (d.title.toLowerCase().includes(query)) out.push({ k: '交付成果', t: d.title, v: 'deliverables' });
     });
     knowledge.forEach(k => {
       if ((k.title + k.desc).toLowerCase().includes(query)) out.push({ k: '知识', t: k.title, v: 'knowledge' });
     });
     return out.slice(0, 8);
-  }, [q, tasks, deliverables, knowledge]);
+  }, [q, tasks, conversationDeliverables, knowledge]);
 
   return (
     <header className="topbar">
@@ -74,6 +74,17 @@ export default function Topbar() {
         </div>
       </div>
       <div className="topbar-right">
+        {authStatus === 'authenticated' && billing && (
+          <button
+            type="button"
+            className="credit-chip"
+            onClick={() => setView('settings')}
+            title={`${billing.plan_label} · 已用 ${billing.credits_used}/${billing.credits_total} 积分`}
+          >
+            <span className="credit-chip-bar"><i style={{ width: `${billing.percent_used}%` }} /></span>
+            <span>积分已用 {billing.percent_used}%</span>
+          </button>
+        )}
         <button className="btn btn-ghost btn-sm" onClick={() => setView('dashboard')}>
           周报数据
         </button>

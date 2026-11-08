@@ -1,121 +1,223 @@
-# ShadowFlow 联调工作区 · 总说明
+# ShadowFlow 本地联调工作区
 
-本目录包含 Python FastAPI 业务后端、Node 网关和 React 工作台。前后端已完成一轮真实联调：浏览器只访问同源 `/api/**`，由 Vite 转发到 Node 网关，再由网关调用 Python；前端不会直连 Python `:8000`。
+ShadowFlow 由 React 工作台、Node 网关和 Python FastAPI 后端组成。浏览器只请求同源 `/api/**`，请求经 Node 网关转发或处理，不会直接连接 Python 端口。
 
-## 目录与端口
+## 1. 项目结构与端口
 
 ```text
 D:\shadowflow\
-├── ShadowFlow-backend\          # Python :8000 + Node 网关 :8002
-│   ├── shadowflow\              # Python 业务代码
-│   ├── server\                  # Node 网关（要求 Node 22）
-│   ├── 新前端对接契约.md         # 后端接口契约
-│   └── backend-openapi.json     # OpenAPI 快照
-├── shadowflow-react\            # React + Vite 前端 :3007
-├── .tools\node22\               # Windows 便携 Node 22.16.0
-├── start-dev.mjs                # 全栈启动器
-└── 本地启动指南.md               # 安装、启动、排障的完整步骤
+├── shadowflow-react\             React + TypeScript + Vite，端口 3007
+├── ShadowFlow-backend\
+│   ├── shadowflow\              Python 业务后端，端口 8000
+│   ├── server\                  Node 22 网关与真实聊天，端口 8002
+│   └── .venv\                   推荐创建的 Python 虚拟环境
+├── .tools\node22\               工作区自带 Windows Node 22
+├── start-dev.mjs                全栈启动器
+└── 本地启动指南.md               详细操作与排障
 ```
 
-| 服务 | 地址 | 作用 |
+| 服务 | 地址 | 用途 |
 | --- | --- | --- |
-| React 工作台 | http://localhost:3007 | 唯一需要打开的页面 |
-| Node 网关健康检查 | http://localhost:8002/health | 网关进程检查 |
-| 全链路业务检查 | 登录后由前端请求 `/api/opc/companies` | 验证网关、Python 和当前账号公司 |
-| Python OpenAPI | http://localhost:8000/docs | 后端接口调试，不供前端直连 |
+| React 工作台 | http://localhost:3007 | 日常使用的页面 |
+| Node 网关 | http://localhost:8002/health | 网关健康检查 |
+| Python API | http://localhost:8000/docs | 后端接口调试 |
 
-注意：网关健康检查是 `/health`，不是 `/api/health`。
+## 2. 环境要求
 
-## 一键启动
+- Windows 10／11，推荐使用 PowerShell。
+- **Python 3.10 或更高版本**，推荐 Python 3.12。
+- **Node.js 22.x**。工作区已带 `.tools\node22`，存在时无需另行安装。
+- 可用端口：`3007`、`8000`、`8002`。
 
-依赖已安装时，在根目录执行：
+检查 Python：
 
-```bash
+```powershell
+python --version
+```
+
+检查工作区 Node 22：
+
+```powershell
+D:\shadowflow\.tools\node22\node.exe --version
+```
+
+如果便携 Node 不存在，请安装 Node.js 22.x。不要使用 Node 24 安装网关依赖后再用 Node 22 运行，`better-sqlite3` 的原生模块需要与 Node 大版本匹配。
+
+## 3. 安装依赖
+
+以下命令在 **PowerShell** 中执行。根目录的 `package.json` 只提供启动脚本，不需要在根目录单独执行 `npm install`。
+
+### 3.1 创建 Python 虚拟环境
+
+```powershell
+cd D:\shadowflow\ShadowFlow-backend
+python -m venv .venv
+```
+
+虚拟环境只需创建一次。如果 `.venv` 已存在，跳过这一步。
+
+### 3.2 安装 Python 服务依赖
+
+```powershell
+cd D:\shadowflow\ShadowFlow-backend
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[server]"
+```
+
+这里会安装：
+
+- 项目核心依赖：`pydantic`、`pyyaml`、`httpx`；
+- API 服务：`fastapi`、`uvicorn`；
+- 定时任务：`APScheduler`；
+- 限流：`slowapi`；
+- 上传与表单：`python-multipart`；
+- 向量计算与混合检索：`numpy`；
+- 凭据加密：`cryptography`。
+
+只有需要运行完整 Python 开发测试时，才改装开发依赖：
+
+```powershell
+cd D:\shadowflow\ShadowFlow-backend
+.\.venv\Scripts\python.exe -m pip install -e ".[server,dev]"
+```
+
+启动器会优先使用 `ShadowFlow-backend\.venv\Scripts\python.exe`。需要使用其他解释器时，可在启动前设置：
+
+```powershell
+$env:SF_PYTHON = "D:\path\to\python.exe"
+```
+
+### 3.3 安装 Node 网关依赖
+
+使用工作区自带 Node 22：
+
+```powershell
+cd D:\shadowflow
+.\.tools\node22\npm.cmd --prefix .\ShadowFlow-backend\server ci
+```
+
+主要运行依赖包括 `express`、`better-sqlite3`、`openai`、`http-proxy-middleware`；开发依赖包括 `typescript`、`tsx`、`vitest`。具体版本以 `ShadowFlow-backend\server\package-lock.json` 为准。
+
+### 3.4 安装 React 前端依赖
+
+```powershell
+cd D:\shadowflow
+.\.tools\node22\npm.cmd --prefix .\shadowflow-react ci
+```
+
+主要运行依赖是 `react`、`react-dom`；构建依赖是 `typescript`、`vite`、`@vitejs/plugin-react`。具体版本以 `shadowflow-react\package-lock.json` 为准。
+
+如果 `.tools\node22` 不存在，可在两个项目目录分别使用自己安装的 Node 22 执行 `npm ci`。
+
+## 4. 启动服务
+
+依赖安装完成后，在根目录执行：
+
+```powershell
 cd D:\shadowflow
 npm run dev
 ```
 
-启动器会选择便携 Node 22，拉起 Python、Node 网关和 React，并在服务就绪后打印地址。如果检测到 `:8000` 已经是 ShadowFlow Python，会明确提示并自动复用，不再报端口冲突。浏览器打开 **http://localhost:3007**，先注册、登录或进入“未注册演示”；公司在对应账号首次进入时独立初始化。按 `Ctrl+C` 停止本次启动的服务；被复用的 Python 不会被停止。
+启动器会拉起 Python、Node 和 React，并等待服务就绪。看到“全部服务已就绪”后打开：
 
-首次安装、三终端手动启动、BYOK 和端口冲突处理，见 **《本地启动指南.md》**。如需显式跳过 Python 启动，仍可执行 `npm run dev -- --no-python`。
-
-## 本次已接通
-
-- 真实账号入口：支持登录、注册和未注册演示；密码使用 PBKDF2 哈希，会话令牌只存哈希。公司、项目、任务和审批在 Python 端按账号校验归属，跨公司资源返回 404。第一个账号认领旧的未归属演示公司，后续账号和每次演示创建独立公司。
-- 工作台真实对话：第二级对话栏支持单聊、群聊、新建、切换和删除；消息持久化在 Node SQLite，按公司隔离，刷新和服务重启后仍可恢复。
-- 真实模型与动态协作：单聊由总经理携带历史上下文回复；群聊复用 Node 编排器，由总经理模型按员工职责决定参与者、执行顺序和交接内容，不再固定全员轮跑。官方 BYOK、MiMo 与自定义 OpenAI 兼容 API 均走真实上游，失败明确报错，不生成模拟成功结果。
-- 人工审批：待审批角标、审批历史、批准继续、驳回返工，以及后续节点自动推进。
-- 公司现场与交付成果：读取真实项目、任务状态及全部任务输出记录；终态项目预览不会被 3 秒轮询重置，内部项目可级联删除，失败项目可只重试失败任务。
-- 组织架构：读取部门和花名册；创建部门、员工入职和移除走真实接口。
-- 定时任务：每天、每周、每月和一次性任务的创建、启停、删除。
-- 数据看板：Node 用量数据与 Python 公司盈亏数据组合展示。
-- 知识库：读取真实知识包列表。
-- 设置页与 BYOK：左下角老板卡片右侧进入；官方 Provider 的 key 由统一客户端按当前 provider 最小披露，自定义 OpenAI 兼容 API 的地址、模型和 key 也已接入工作台聊天。
-- 在线数据加载失败会明确报错；只有网关未连接时才进入演示模式，不把演示数据混入在线结果。
-
-工作台聊天链路为：**新建单聊／群聊 → 配置模型 → 连续对话 → 总经理按需派工与交接 → 保存历史／删除对话**。旧项目 Playbook 仍保留独立的 **派工 → 人工审批／驳回返工 → 继续执行 → 交付预览 → 删除或失败重试** 流程，不再由工作台聊天自动创建；商务订单关联项目不能直接删除。
-
-### 当前 AI 执行边界
-
-新工作台的单聊和群聊已接入真实模型，不再走 `opc_company.py` 的模拟回复。单聊携带最近 24 条消息；群聊由总经理先出计划，再按顺序把前序员工的实际产出交给后一位员工。模型不可用时直接显示错误，不伪造执行成功。
-
-旧项目列表中的历史项目及其 Playbook 仍属于原有独立流程，其中已有 `[simulated]` 输出不会被改写，也不会被当作新工作台的真实模型成果。删除新聊天只删除该会话及其消息，不删除项目、任务、审批或交付物。
-
-### 设置与本地存储
-
-- 官方 BYOK 使用既有 `sf_{provider}_key` 和请求头链路；自定义 API 的 Base URL、模型 ID 和 key 分别保存为 `sf_custom_api_base_url`、`sf_custom_api_model`、`sf_custom_api_key`。聊天时自定义配置只发送到 `/api/opc-chat/**`，key 不写入服务端数据库。
-- 已有 key 不回显，留空保存会保留原 key；清除密钥需要二次确认，不影响模型选择或对话。
-- 模型配置和登录会话令牌存储在当前浏览器 `localStorage`，刷新不会重置；清除浏览器数据会删除，换浏览器／设备不会同步。密码不写入浏览器存储。
-- 新版在线聊天按公司隔离并持久化在服务端，单聊携带最近 24 条上下文。旧版本地聊天不会自动迁移到服务端。
-- 服务端数据库位于 `ShadowFlow-backend\.shadowflow\`：`opc.sqlite` 保存账号、会话、公司、项目、任务、审批和订单，`app.sqlite` 保存 Node／应用侧数据，`runtime.sqlite` 保存运行记录。运行时可能伴随 `-wal`、`-shm` 文件，不要在服务运行时手工移动。
-- 隔离边界：OPC 公司核心业务数据由服务端校验归属；定时任务当前按公司在前端过滤，Node 全局用量、知识包及旧通用平台数据不属于本轮完整的账号级隔离范围。
-
-## 明确留空、已预留的位置
-
-- **后端有接口、当前工作台无页面**：商品／订单／支付、订单事件与取消、单任务读取与强制执行、收入登记、知识包创建／重建索引／详情查询、定时任务运行历史，以及另一套通用会话／团队／运行平台接口。
-- **前端有入口、后端缺对应写能力**：部门重命名／删除、独立岗位增删改、员工资料和汇报关系编辑；界面会明确提示“未接入”，不会本地伪造成功。
-- **当前仅占位**：交付物 PDF 导出、附件上传、通用错误“重试”；统一 API 客户端已保留扩展入口。
-- **合理的纯前端本地能力**：离线演示、已加载数据搜索、设置页模型选择／BYOK、自定义 API 配置草稿，以及上述临时聊天恢复；这些不伪造成服务端能力。
-- `/workflow/*` SSE 不在本轮使用范围内，仍遵循原契约中的已知前缀限制。
-
-## 构建与回归检查
-
-```bash
-cd D:\shadowflow
-npm run build           # React TypeScript + Vite 构建
-npm run check:gateway   # Node 网关 TypeScript 构建
-
-cd D:\shadowflow\ShadowFlow-backend
-.\.venv\Scripts\python.exe -m pytest tests/api/test_opc_os.py -q
+```text
+http://localhost:3007
 ```
 
-本轮新增聊天定向测试覆盖连续上下文、按职责跳过无关员工、真实前序产出交接、跨公司读取／删除隔离；另有无密钥、删除和删除后 404 的隔离接口冒烟。构建与测试结果以当次命令输出为准，真实上游需用户配置自己的 key 后验证，不在回归中消耗付费额度。
+首次进入可注册、登录或使用未注册演示。停止时在启动终端按 `Ctrl+C`。
 
-## 稳定备份与回滚
-
-本轮真实聊天改造前的源码快照位于 `backups\pre-real-chat-20261107-1630`，包含前端、后端和启动器，不包含运行数据库、依赖与 `.git`。恢复时先停止全部服务，手工备份当前源码和需要保留的数据，再将该目录中的对应源码复制回根目录；数据库不会被此快照自动覆盖。
-
-核心流程改造前的可运行源码和 5 个 SQLite 一致性快照保存在 `backups\stable-20261107-1228`，对应 `rollback-stable.ps1`，会覆盖源码和数据库。
-
-设置页改造前的前端源码和文档另存于 `backups\pre-settings-20261107-1355`。只需撤销设置页及后续前端改动时，先停止 `:3007` 前端，再执行：
+如果 Python 已经运行，启动器会自动复用兼容实例。**修改 Python 或 Node 代码后，应停止对应旧进程再重新执行 `npm run dev`，避免继续复用旧代码。** 已有新版 Python 时可显式跳过重复启动：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\rollback-pre-settings.ps1
+npm run dev -- --no-python
 ```
 
-该脚本只恢复前端源码与文档，不修改数据库。两份回滚都会覆盖对应的新文件，执行前请另行备份需要保留的内容。
+## 5. 配置模型并验证
 
-## 文档阅读顺序
+1. 登录后点击左下角老板卡片右侧的“设置”。
+2. 在“模型与 API”配置自己的 MiMo API Key。
+3. 服务地址固定为 `https://api.xiaomimimo.com/v1`，模型固定为 `mimo-v2.6-pro`。
+4. 在“知识库 Embedding”选择厂商、模型并填写 Key。默认是通义 `qwen3.7-text-embedding-flash`，Base URL 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`；点击“测试连接”应返回真实向量维度。也提供 OpenAI、SiliconFlow 和自定义 OpenAI 兼容接口预设。
+5. 打开“知识库”，拖入或点击选择文件。首次上传自动创建“公司知识库”；展开知识包可查看解析状态并测试检索。配置 Embedding 后，新上传资料会生成真实向量，检索使用 `BM25 + vector` 混合通道；未配置 Key 时回退到本地关键词与结构检索。
+6. 新建单聊，发送“先写推广文案，再结合数据分析复盘”，确认总经理实际派发相关员工、员工顺序交接并由总经理汇总；连续发送两条消息并刷新，确认上下文恢复。
+7. 聊天区会显示知识库检索、总经理规划、员工派单等真实工作流卡片；右栏可查看分工、员工思考、产出与交接。工作流完成事件随消息保存，刷新后可恢复。
+8. 在“设置 → 工具与扩展”配置 Tavily 或 SerpAPI；在“组织架构”给员工授予 `web_search`、`fetch_url` 等权限后，员工才能通过原生工具循环获取真实外部结果。GitHub 读取可配置 Token。未配置供应商时工具会明确失败，不会生成模拟搜索结果。
+9. 定时任务支持创建、编辑、暂停、立即执行、运行历史和删除。执行会进入真实总经理编排并生成可追溯对话；失败会如实记录，连续失败达到上限后自动停用。
+10. 新建群聊验证同一套动态编排，再删除测试对话，确认不影响项目、审批和交付物。
 
-1. **本地启动指南.md**：当前可用的安装、启动和排障步骤。
-2. **shadowflow-react/README.md**：当前前端联调架构与扩展点。
-3. **ShadowFlow-backend/新前端对接契约.md**：后端契约原文。
-4. **ShadowFlow前端联调对接指南.md**：最初的改造方案，保留作历史参考；当前实现以代码和前两份文档为准。
+**Embedding、聊天模型和外部工具是三套独立配置。** 已有知识包绑定首次向量化时的模型；更换 Embedding 模型后请新建知识包，不要混用不同维度或模型的索引。
 
-## 联调红线
+日常 API Key 只保存在当前浏览器 `localStorage`，随对应请求使用，不写入服务端数据库。Node 仅在请求中转发 Embedding Key，Python 仅在进程内存创建向量客户端。为让定时任务脱离浏览器执行，保存任务时所需的模型／工具凭据与独立服务会话会使用 Fernet 加密存入任务 JSON，接口不会返回这些凭据。真实模型、Embedding 和搜索调用需要有效密钥并可能产生服务商费用；缺 key 或上游失败时会明确报错，不生成模拟成功结果。
 
-- 前端只请求 `/api/**`，禁止直连 Python `:8000`。
-- 新请求统一走 `shadowflow-react/src/api.ts`，组件中不写裸 `fetch`。
-- 请求未成功前不得伪造审批、交付、删除、重试、导出、组织变更或模型连接成功。
-- BYOK key 只存浏览器 `localStorage`，每个请求仅携带当前 provider 对应的 header。
-- 保持现有全直角视觉和八个视图，后续扩展沿用 `api.ts → store.ts → 视图组件` 的分层。
+## 6. 数据存储位置
+
+- `ShadowFlow-backend\.shadowflow\opc.sqlite`：账号、公司、员工、项目、任务、审批和订单。
+- `ShadowFlow-backend\server\.shadowflow\app.sqlite`：Node 应用数据、新版工作台聊天及知识包公司归属。
+- `ShadowFlow-backend\.shadowflow\knowledge\`：知识包原始文件、解析索引和检索数据库。
+- `ShadowFlow-backend\.shadowflow\runtime.sqlite`：运行记录。
+- `ShadowFlow-backend\.shadowflow\schedules\`：定时任务、执行历史及 Fernet 加密的任务执行凭据。
+- `ShadowFlow-backend\.shadowflow\.schedule-secret-key`：任务凭据的本地加密密钥，必须保密并与任务文件一起备份。
+
+聊天数据表为 `opc_chat_conversations` 和 `opc_chat_messages`，按公司隔离。删除对话会级联删除消息。SQLite 运行时可能产生 `-wal`、`-shm` 文件，不要在服务运行时手工移动数据库。
+
+## 7. 构建与测试
+
+前端类型检查和生产构建：
+
+```powershell
+cd D:\shadowflow
+npm run build
+```
+
+Node 网关类型检查：
+
+```powershell
+npm run check:gateway
+```
+
+Node 全量测试：
+
+```powershell
+cd D:\shadowflow\ShadowFlow-backend\server
+D:\shadowflow\.tools\node22\node.exe node_modules\vitest\vitest.mjs run --maxWorkers=2
+```
+
+Python 离线测试：
+
+```powershell
+cd D:\shadowflow\ShadowFlow-backend
+.\.venv\Scripts\python.exe -m pytest -m "not requires_api_key" --tb=short -q
+```
+
+## 8. 当前功能边界
+
+- 工作台：单聊、群聊、新建、切换、删除、真实模型回复、流式思考、图片／视频／TXT 附件和服务端历史。
+- 项目与经营：项目派工、人工审批、驳回返工、交付预览、失败重试、订单和运行日志均连接真实后端。历史 `[simulated]` 输出仍是模拟记录，不代表真实模型成果。
+- 组织与数据：组织架构、定时任务、Token 用量与官方刊例价估算看板。
+- 知识库：拖拽／点击上传、多文件解析、公司隔离、原文检索测试，以及单聊／群聊自动检索注入。支持通义、OpenAI、SiliconFlow 和自定义 OpenAI 兼容 Embedding；默认通义 flash，真实 `BM25 + vector` 混合检索，无 Key 时回退本地关键词。
+- 扩展工具：按岗位授权 Web Search、网页读取、公司目录只读文件、GitHub／消息读取；工具结果会回传模型。图片生成接口已预留，但需要单独配置图像供应商。
+- 安全边界：Shell、文件写入、外部发布、邮件等高风险操作不会在 OPC 聊天中隐式开放；未配置搜索供应商、模型密钥或执行桥时不会伪造成功。
+- 尚未实现：PDF 导出、独立图像供应商配置和部分通用运行平台页面；界面不会伪造这些操作成功。
+
+## 9. 备份与回滚
+
+真实聊天改造前的源码快照：
+
+```text
+D:\shadowflow\backups\pre-real-chat-20261107-1630
+```
+
+更早的稳定版本及数据库快照：
+
+```text
+D:\shadowflow\backups\stable-20261107-1228
+```
+
+对应回滚脚本为 `rollback-stable.ps1`。回滚会覆盖代码和数据，执行前必须停止服务并另行备份需要保留的内容。
+
+## 10. 联调约定
+
+- 前端只请求 `/api/**`，不得直连 Python `:8000`。
+- 新请求统一经过 `shadowflow-react\src\api.ts` 和 `src\store.ts`，组件中不写裸 `fetch`。
+- 请求未成功前不得伪造聊天、审批、交付、删除、重试或组织变更成功。
+- 保持前后端目录分离和现有全直角 UI 风格。

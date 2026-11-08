@@ -49,7 +49,7 @@ Python FastAPI :8000
 | 页面/能力 | 当前实现 |
 | --- | --- |
 | 工作台单聊／群聊 | `/api/opc-chat` 的新建、列表、历史、删除和发消息；在线会话由 Node SQLite 按公司持久化 |
-| 真实模型与动态协作 | 单聊携带最近 24 条消息；群聊由总经理选择员工、顺序和交接，调用真实模型，失败不伪造成功 |
+| 真实模型与动态协作 | 单聊与群聊均携带最近 24 条消息；除寒暄外均由总经理选择相关员工、安排顺序和交接，员工真实调用后由总经理汇总，失败不伪造成功 |
 | 旧项目派工 | `POST /api/opc/company/{id}/projects` + `POST /api/opc/projects/{id}/run`，属于独立历史流程，不再由新聊天自动创建 |
 | 人工审批 | 审批列表与历史筛选；`POST /api/opc/approvals/{id}/decide` 后调用项目运行接口继续推进 |
 | 公司现场 | 项目列表、项目详情和任务状态，工作台每 3 秒刷新活动项目 |
@@ -77,18 +77,17 @@ Python FastAPI :8000
 
 未接入的按钮会明确提示，不会显示虚假的成功状态。
 
-## 对话存储与后续扩展
+## 对话存储、流式输出与后续扩展
 
-在线聊天通过 `src/api.ts → src/store.ts → 视图组件` 调用 `/api/opc-chat`，服务端保存会话和消息。`src/chat-storage.ts`、`src/conversation-storage.ts` 仅保留旧版本地记录兼容和离线演示能力，不覆盖在线服务端历史；旧本地聊天不会自动迁移。后续可增加流式输出、会话重命名或附件接口，无需改变项目、审批和交付的独立链路。
+在线聊天通过 `src/api.ts → src/store.ts → 视图组件` 调用 `/api/opc-chat`，服务端保存会话和正式消息。消息接口以 `Accept: application/x-ndjson` 请求流式响应，逐行处理 `message-start`、`thinking-delta`、`content-delta`、`message-end`、`done` 和 `error`。单聊的派单与员工成果使用 `workflow` 通道进入右侧工作流，聊天区只显示老板和总经理最终回复；刷新后按通道恢复。思考内容只来自上游通道，暗色流式显示并计时，正式答案开始后自动折叠；数据库不保存思维链。聊天仅在用户位于底部时自动跟随，上翻后显示“回到最新”。`src/chat-storage.ts`、`src/conversation-storage.ts` 仅保留旧版本地记录兼容和离线演示能力，不覆盖在线服务端历史；旧本地聊天不会自动迁移。后续可增加会话重命名或附件接口，无需改变项目、审批和交付的独立链路。
 
 ## 设置与 BYOK
 
 从左下角老板卡片右侧“设置”进入。`src/settings-storage.ts` 是模型配置的浏览器 repository，视图通过 `store.ts` 读取、保存和清除，不直接操作密钥。
 
-- 官方 Provider：key 保存在 `sf_{provider}_key`，默认 provider 为 `sf_default_provider`，每次请求只注入当前 provider 的一个 `X-{Provider}-Key` header；模型选择存储为 `sf_selected_model`。
-- 自定义 OpenAI 兼容 API：Base URL、模型 ID 和 key 分别保存为 `sf_custom_api_base_url`、`sf_custom_api_model`、`sf_custom_api_key`，聊天时只向 `/api/opc-chat/**` 发送，不写入服务端数据库。
-- 已有 key 不回显；留空保存保留原 key；清除需要二次确认，不影响聊天和模型选择。
-- API 配置只在当前浏览器，刷新恢复，清除浏览器数据会删除，不跨设备同步；新版在线聊天历史在服务端，不随浏览器配置清除。
+- 当前工作台仅开放 MiMo，Base URL 固定为 `https://api.xiaomimimo.com/v1`，模型固定为 `mimo-v2.6-pro`。
+- key 保存在 `sf_mimo_key`，聊天请求只注入 `X-MiMo-Key`，不写入服务端数据库；已有 key 不回显，留空保存保留原 key。
+- 清除需要二次确认，不影响聊天；API 配置只在当前浏览器，刷新恢复，清除浏览器数据会删除，不跨设备同步。
 
 ## 目录结构
 
@@ -98,7 +97,7 @@ src/
 ├── App.tsx                  布局与视图切换
 ├── api.ts                   唯一 API 客户端与后续扩展接口
 ├── chat-storage.ts          本地对话过渡 repository，后续可替换为聊天后端
-├── settings-storage.ts      官方 BYOK 与自定义 API 的本地配置 repository
+├── settings-storage.ts      官方 BYOK 与MiMo 的本地配置 repository
 ├── store.ts                 在线状态、真实业务动作、设置、聊天恢复、离线演示回退
 ├── data.ts                  仅用于离线演示的种子数据
 ├── types.ts                 页面类型
@@ -114,7 +113,7 @@ src/
     ├── DeliverablesView.tsx 交付成果
     ├── DashboardView.tsx    数据看板
     ├── KnowledgeView.tsx    知识库
-    ├── SettingsView.tsx     BYOK、自定义 API、执行状态与存储说明
+    ├── SettingsView.tsx     BYOK、MiMo、执行状态与存储说明
     ├── ModalHost.tsx        审批、删除、重试、预览等弹窗
     └── Toasts.tsx           操作反馈
 ```

@@ -2,29 +2,28 @@ import type { ViewKey } from '../types';
 import { useWorkbench, VIEW_TITLES } from '../store';
 
 const NAV_GROUPS: { label: string; items: ViewKey[] }[] = [
-  { label: '工 作', items: ['workbench', 'approvals', 'tasks', 'deliverables'] },
+  { label: '工 作', items: ['workbench', 'orders', 'approvals', 'logs', 'tasks', 'deliverables'] },
   { label: '公 司', items: ['org', 'dashboard', 'knowledge'] },
 ];
 
 export default function Sidebar() {
-  const { view, setView, tasks, approvals, authStatus, authUser, currentCompany, setAuthPanel, guestLogin, logout, toast } = useWorkbench();
+  const { view, setView, tasks, chatApprovals, authStatus, authUser, currentCompany, logout } = useWorkbench();
   const taskBadge = tasks.filter(t => t.enabled).length;
-  const approvalBadge = approvals.filter(item => item.status === 'pending').length;
+  const approvalBadge = chatApprovals.filter(item => item.status === 'pending').length;
 
   return (
     <aside className="sidebar">
-      <div className="brand">
+      <button type="button" className="brand" onClick={() => window.location.assign('/')} title="返回介绍页">
         <div className="brand-mark">S</div>
         <div className="brand-name">ShadowFlow</div>
-      </div>
+      </button>
 
       {NAV_GROUPS.map(group => (
         <div key={group.label}>
           <div className="nav-label">{group.label}</div>
           {group.items.map(item => (
             <button key={item} className={view === item ? 'nav-item active' : 'nav-item'} onClick={() => setView(item)} disabled={authStatus !== 'authenticated'}>
-              <span className="mark" />
-              {VIEW_TITLES[item]}
+              <span className="nav-text">{VIEW_TITLES[item]}</span>
               {item === 'tasks' && authStatus === 'authenticated' && <span className="badge">{taskBadge}</span>}
               {item === 'approvals' && authStatus === 'authenticated' && approvalBadge > 0 && <span className="badge">{approvalBadge}</span>}
             </button>
@@ -45,13 +44,6 @@ export default function Sidebar() {
         ) : (
           <div className="account-panel">
             <div className="user-card"><div className="user-avatar">访</div><div className="user-info"><div className="user-name">{authStatus === 'loading' ? '正在确认身份' : '尚未登录'}</div></div></div>
-            {authStatus === 'anonymous' && (
-              <div className="auth-entry-list">
-                <button type="button" onClick={() => setAuthPanel('login')}>登录</button>
-                <button type="button" onClick={() => setAuthPanel('register')}>注册</button>
-                <button type="button" onClick={() => void guestLogin().catch(error => toast(`演示创建失败：${error instanceof Error ? error.message : String(error)}`))}>未注册演示</button>
-              </div>
-            )}
           </div>
         )}
       </div>

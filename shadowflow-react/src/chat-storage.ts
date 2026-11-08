@@ -5,7 +5,7 @@ import type { Msg, MsgCard } from './types';
  *
  * 当前后端项目 API 没有聊天历史契约，因此这里只负责浏览器恢复，不伪造服务端会话。
  * 后续聊天后端接入时，以同一 scope 替换为服务端 repository；store 和视图无需改写。
- * 在线公司以 companyId 隔离，离线演示固定使用 offline，避免两种数据混合。
+ * 缓存按公司与会话 scope 隔离，仅用于恢复后端已确认的对话记录。
  */
 const STORAGE_PREFIX = 'sf_workbench_chat:v1:';
 const MAX_MESSAGES = 200;

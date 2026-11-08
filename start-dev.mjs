@@ -83,28 +83,42 @@ async function waitFor(url, label, method = 'GET', timeoutMs = 120_000) {
 let activePythonPort = 8000;
 
 async function hasReusablePython() {
-  try {
-    const response = await fetch('http://127.0.0.1:8000/', { signal: AbortSignal.timeout(2500) });
-    if (!response.ok) return false;
+  const readRoot = async (port) => {
+    const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2500) });
+    if (!response.ok) return null;
     const body = await response.json();
-    if (body?.name !== 'ShadowFlow' || body?.status !== 'running') return false;
-    const authProbe = await fetch('http://127.0.0.1:8000/api/opc/auth/me', { signal: AbortSignal.timeout(2500) });
-    if (authProbe.status === 404) {
-      activePythonPort = 8010;
-      try {
-        const alternate = await fetch('http://127.0.0.1:8010/api/opc/auth/me', { signal: AbortSignal.timeout(2500) });
-        if (alternate.status === 401) {
-          console.log('检测到 :8010 已有新版 ShadowFlow Python，直接复用。');
-          return true;
-        }
-      } catch { /* :8010 空闲时继续启动新版。 */ }
-      console.log('检测到 :8000 是旧版或异常残留的 ShadowFlow，自动改用 :8010 启动新版 Python。');
+    return body?.name === 'ShadowFlow' && body?.status === 'running' ? body : null;
+  };
+  try {
+    const body = await readRoot(8000);
+    if (body?.capabilities?.byok_embedding === true) {
+      const authProbe = await fetch('http://127.0.0.1:8000/api/opc/auth/me', { signal: AbortSignal.timeout(2500) });
+      return authProbe.status === 401;
+    }
+    if (body) console.log('检测到 :8000 是旧版 ShadowFlow，自动寻找新版端口。');
+  } catch { /* :8000 空闲或其他服务，继续按原逻辑启动。 */ }
+  for (const port of [8010, 8011, 8012]) {
+    try {
+      const body = await readRoot(port);
+      if (!body) continue;
+      if (body.capabilities?.byok_embedding !== true) {
+        console.log(`检测到 :${port} 是旧版 ShadowFlow，不复用。`);
+        continue;
+      }
+      const authProbe = await fetch(`http://127.0.0.1:${port}/api/opc/auth/me`, { signal: AbortSignal.timeout(2500) });
+      if (authProbe.status === 401) {
+        activePythonPort = port;
+        console.log(`检测到 :${port} 已有新版 ShadowFlow Python，直接复用。`);
+        return true;
+      }
+    } catch {
+      activePythonPort = port;
+      console.log(`自动改用空闲端口 :${port} 启动新版 Python。`);
       return false;
     }
-    return authProbe.status === 401;
-  } catch {
-    return false;
   }
+  activePythonPort = 8000;
+  return false;
 }
 
 async function main() {

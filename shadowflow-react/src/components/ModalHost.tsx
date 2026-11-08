@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useWorkbench } from '../store';
+import ConversationDeliverableModal from './ConversationDeliverableModal';
+import ProductEditorModal, { DeleteProductModal } from './ProductEditorModal';
+import ProductQrModal from './ProductQrModal';
+import ShipOrderModal from './ShipOrderModal';
+import AvatarPicker from './AvatarPicker';
 
 export default function ModalHost() {
   const { modal, closeModal } = useWorkbench();
@@ -14,7 +19,7 @@ export default function ModalHost() {
   }, [modal, closeModal]);
 
   if (!modal) return null;
-  const wide = modal.kind === 'preview-deliverable';
+  const wide = modal.kind === 'preview-conversation-deliverable' || modal.kind === 'product-editor';
 
   return (
     <div
@@ -26,8 +31,10 @@ export default function ModalHost() {
       <div className={wide ? 'modal wide' : 'modal'} role="dialog" aria-modal="true" aria-label={TITLE[modal.kind]}>
         <div className="modal-head">
           <h3>{TITLE[modal.kind]}</h3>
-          <button className="modal-x" onClick={closeModal}>
-            关闭
+          <button type="button" className="modal-x" onClick={closeModal} aria-label="关闭" title="关闭">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
           </button>
         </div>
         <ModalBody modal={modal} />
@@ -47,9 +54,11 @@ const TITLE: Record<string, string> = {
   'new-task': '新建定时任务',
   'delete-task': '删除定时任务',
   'delete-conversation': '删除对话',
-  'decide-approval': '人工审批',
-  'delete-deliverable': '删除项目',
-  'preview-deliverable': '交付物预览',
+  'preview-conversation-deliverable': '交付成果',
+  'product-editor': '商品',
+  'product-qr': '销售二维码',
+  'delete-product': '删除商品',
+  'ship-order': '订单发货',
 };
 
 function ModalBody({ modal }: { modal: NonNullable<ReturnType<typeof useWorkbench>['modal']> }) {
@@ -74,12 +83,16 @@ function ModalBody({ modal }: { modal: NonNullable<ReturnType<typeof useWorkbenc
       return <DeleteTaskModal taskId={modal.taskId} />;
     case 'delete-conversation':
       return <DeleteConversationModal conversationId={modal.conversationId} />;
-    case 'decide-approval':
-      return <DecideApprovalModal approvalId={modal.approvalId} decision={modal.decision} />;
-    case 'delete-deliverable':
-      return <DeleteDeliverableModal deliverableId={modal.deliverableId} />;
-    case 'preview-deliverable':
-      return <PreviewDeliverableModal deliverableId={modal.deliverableId} />;
+    case 'preview-conversation-deliverable':
+      return <ConversationDeliverableModal deliverableId={modal.deliverableId} />;
+    case 'product-editor':
+      return <ProductEditorModal productId={modal.productId} />;
+    case 'product-qr':
+      return <ProductQrModal productId={modal.productId} />;
+    case 'delete-product':
+      return <DeleteProductModal productId={modal.productId} />;
+    case 'ship-order':
+      return <ShipOrderModal orderId={modal.orderId} />;
   }
 }
 
@@ -104,47 +117,49 @@ function DeleteConversationModal({ conversationId }: { conversationId: string })
   );
 }
 
+function useOrgSubmit() {
+  const [busy, setBusy] = useState(false);
+  const submit = async (operation: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await operation();
+    } catch {
+      // store 已展示真实错误，弹窗保留供修正后重试。
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { busy, submit };
+}
+
 /* ─────────── 部门 ─────────── */
 
 function NewDeptModal() {
   const { createDept, closeModal, toast } = useWorkbench();
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
+  const { busy, submit } = useOrgSubmit();
 
   return (
     <>
       <div className="modal-body">
         <div className="form-group">
           <label className="form-label">部门名称</label>
-          <input
-            className="form-input"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="例如：渠道增长部"
-          />
+          <input className="form-input" value={name} disabled={busy} onChange={e => setName(e.target.value)} placeholder="例如：渠道增长部" />
         </div>
         <div className="form-group">
           <label className="form-label">说明（可选）</label>
-          <input
-            className="form-input"
-            value={desc}
-            onChange={e => setDesc(e.target.value)}
-            placeholder="这个部门负责什么业务"
-          />
+          <input className="form-input" value={desc} disabled={busy} onChange={e => setDesc(e.target.value)} placeholder="这个部门负责什么业务" />
         </div>
       </div>
       <div className="modal-foot">
-        <button className="btn btn-ghost btn-sm" onClick={closeModal}>
-          取消
-        </button>
-        <button
-          className="btn btn-dark btn-sm"
-          onClick={() => {
-            if (!name.trim()) return toast('请填写部门名称');
-            createDept(name.trim(), desc.trim());
-          }}
-        >
-          创建部门
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={closeModal}>取消</button>
+        <button className="btn btn-dark btn-sm" disabled={busy} onClick={() => {
+          if (!name.trim()) return toast('请填写部门名称');
+          void submit(() => createDept(name.trim(), desc.trim()));
+        }}>
+          {busy ? '创建中…' : '创建部门'}
         </button>
       </div>
     </>
@@ -152,24 +167,26 @@ function NewDeptModal() {
 }
 
 function RenameDeptModal({ deptId }: { deptId: string }) {
-  const { org, renameDept, closeModal } = useWorkbench();
+  const { org, renameDept, closeModal, toast } = useWorkbench();
   const dept = org.departments.find(d => d.id === deptId);
   const [name, setName] = useState(dept?.name ?? '');
+  const { busy, submit } = useOrgSubmit();
 
   return (
     <>
       <div className="modal-body">
         <div className="form-group">
           <label className="form-label">部门名称</label>
-          <input className="form-input" value={name} onChange={e => setName(e.target.value)} />
+          <input className="form-input" value={name} disabled={busy} onChange={e => setName(e.target.value)} />
         </div>
       </div>
       <div className="modal-foot">
-        <button className="btn btn-ghost btn-sm" onClick={closeModal}>
-          取消
-        </button>
-        <button className="btn btn-dark btn-sm" onClick={() => renameDept(deptId, name.trim())}>
-          保存
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={closeModal}>取消</button>
+        <button className="btn btn-dark btn-sm" disabled={busy} onClick={() => {
+          if (!name.trim()) return toast('请填写部门名称');
+          void submit(() => renameDept(deptId, name.trim()));
+        }}>
+          {busy ? '保存中…' : '保存'}
         </button>
       </div>
     </>
@@ -181,20 +198,19 @@ function DeleteDeptModal({ deptId }: { deptId: string }) {
   const dept = org.departments.find(d => d.id === deptId);
   const posIds = org.positions.filter(p => p.deptId === deptId).map(p => p.id);
   const staffN = org.staff.filter(s => posIds.includes(s.positionId)).length;
+  const { busy, submit } = useOrgSubmit();
 
   return (
     <>
       <div className="modal-body">
         <div className="preview-box">
-          确认删除「<b>{dept?.name}</b>」？将同时移除其下 <b>{posIds.length}</b> 个岗位与 <b>{staffN}</b> 名员工。此操作不可撤销。
+          确认删除「<b>{dept?.name}</b>」？将真实移除其下 <b>{posIds.length}</b> 个岗位与 <b>{staffN}</b> 名岗位员工，再删除部门。此操作不可撤销。
         </div>
       </div>
       <div className="modal-foot">
-        <button className="btn btn-ghost btn-sm" onClick={closeModal}>
-          取消
-        </button>
-        <button className="btn btn-danger btn-sm" onClick={() => deleteDept(deptId)}>
-          确认删除
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={closeModal}>取消</button>
+        <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => void submit(() => deleteDept(deptId))}>
+          {busy ? '删除中…' : '确认删除'}
         </button>
       </div>
     </>
@@ -209,64 +225,41 @@ function NewPositionModal({ deptId }: { deptId?: string }) {
   const [dept, setDept] = useState(deptId ?? org.departments[0]?.id ?? '');
   const [managerId, setManagerId] = useState('p-ceo');
   const [soul, setSoul] = useState('');
+  const { busy, submit } = useOrgSubmit();
 
   return (
     <>
       <div className="modal-body">
         <div className="form-group">
           <label className="form-label">岗位名称</label>
-          <input
-            className="form-input"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="例如：增长运营专员"
-          />
+          <input className="form-input" value={name} disabled={busy} onChange={e => setName(e.target.value)} placeholder="例如：增长运营专员" />
         </div>
         <div className="form-group">
           <label className="form-label">所属部门</label>
-          <select className="form-select" value={dept} onChange={e => setDept(e.target.value)}>
-            {org.departments.map(d => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
+          <select className="form-select" value={dept} disabled={busy} onChange={e => setDept(e.target.value)}>
+            {org.departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         </div>
         <div className="form-group">
           <label className="form-label">汇报对象</label>
-          <select className="form-select" value={managerId} onChange={e => setManagerId(e.target.value)}>
-            {org.positions
-              .filter(p => !p.root)
-              .map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
+          <select className="form-select" value={managerId} disabled={busy} onChange={e => setManagerId(e.target.value)}>
+            {org.positions.filter(p => !p.root).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             <option value="p-ceo">总经理（公司负责人）</option>
           </select>
         </div>
         <div className="form-group">
           <label className="form-label">职责提示词（岗位灵魂）</label>
-          <textarea
-            className="form-area"
-            value={soul}
-            onChange={e => setSoul(e.target.value)}
-            placeholder="描述这个岗位负责什么、怎么干活、交付什么"
-          />
+          <textarea className="form-area" value={soul} disabled={busy} onChange={e => setSoul(e.target.value)} placeholder="描述这个岗位负责什么、怎么干活、交付什么" />
         </div>
+        <div className="empty-tip">将创建真实岗位员工，初始姓名为「岗位名·待入职」。</div>
       </div>
       <div className="modal-foot">
-        <button className="btn btn-ghost btn-sm" onClick={closeModal}>
-          取消
-        </button>
-        <button
-          className="btn btn-dark btn-sm"
-          onClick={() => {
-            if (!name.trim()) return toast('请填写岗位名称');
-            createPosition({ name: name.trim(), deptId: dept, managerId, soul });
-          }}
-        >
-          创建岗位
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={closeModal}>取消</button>
+        <button className="btn btn-dark btn-sm" disabled={busy} onClick={() => {
+          if (!name.trim()) return toast('请填写岗位名称');
+          void submit(() => createPosition({ name: name.trim(), deptId: dept, managerId, soul }));
+        }}>
+          {busy ? '创建中…' : '创建岗位'}
         </button>
       </div>
     </>
@@ -277,20 +270,19 @@ function DeletePositionModal({ positionId }: { positionId: string }) {
   const { org, deletePosition, closeModal } = useWorkbench();
   const p = org.positions.find(x => x.id === positionId);
   const n = org.staff.filter(s => s.positionId === positionId).length;
+  const { busy, submit } = useOrgSubmit();
 
   return (
     <>
       <div className="modal-body">
         <div className="preview-box">
-          确认删除岗位「<b>{p?.name}</b>」？其下 <b>{n}</b> 名员工将同时移除。此操作不可撤销。
+          确认删除岗位「<b>{p?.name}</b>」？其下 <b>{n}</b> 名岗位员工将同时被真实移除。此操作不可撤销。
         </div>
       </div>
       <div className="modal-foot">
-        <button className="btn btn-ghost btn-sm" onClick={closeModal}>
-          取消
-        </button>
-        <button className="btn btn-danger btn-sm" onClick={() => deletePosition(positionId)}>
-          确认删除
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={closeModal}>取消</button>
+        <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => void submit(() => deletePosition(positionId))}>
+          {busy ? '删除中…' : '确认删除'}
         </button>
       </div>
     </>
@@ -302,61 +294,42 @@ function DeletePositionModal({ positionId }: { positionId: string }) {
 function NewStaffModal({ positionId }: { positionId?: string }) {
   const { org, createStaff, closeModal, toast } = useWorkbench();
   const [name, setName] = useState('');
-  const [pos, setPos] = useState(
-    positionId ?? org.positions.find(p => !p.root)?.id ?? ''
-  );
+  const [pos, setPos] = useState(positionId ?? org.positions.find(p => !p.root)?.id ?? '');
   const [managerId, setManagerId] = useState('p-ceo');
+  const [avatar, setAvatar] = useState('');
+  const { busy, submit } = useOrgSubmit();
 
   return (
     <>
       <div className="modal-body">
         <div className="form-group">
           <label className="form-label">姓名 / 花名</label>
-          <input
-            className="form-input"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="例如：小林"
-          />
+          <input className="form-input" value={name} disabled={busy} onChange={e => setName(e.target.value)} placeholder="例如：小林" />
         </div>
         <div className="form-group">
           <label className="form-label">所属岗位</label>
-          <select className="form-select" value={pos} onChange={e => setPos(e.target.value)}>
-            {org.positions
-              .filter(p => !p.root)
-              .map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.name}（{org.departments.find(d => d.id === p.deptId)?.name || '—'}）
-                </option>
-              ))}
+          <select className="form-select" value={pos} disabled={busy} onChange={e => setPos(e.target.value)}>
+            {org.positions.filter(p => !p.root).map(p => (
+              <option key={p.id} value={p.id}>{p.name}（{org.departments.find(d => d.id === p.deptId)?.name || '—'}）</option>
+            ))}
           </select>
         </div>
         <div className="form-group">
           <label className="form-label">汇报对象（岗位）</label>
-          <select className="form-select" value={managerId} onChange={e => setManagerId(e.target.value)}>
-            {org.positions
-              .filter(p => !p.root)
-              .map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
+          <select className="form-select" value={managerId} disabled={busy} onChange={e => setManagerId(e.target.value)}>
+            {org.positions.filter(p => !p.root).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             <option value="p-ceo">总经理（公司负责人）</option>
           </select>
         </div>
+        <AvatarPicker value={avatar} onChange={setAvatar} disabled={busy} label="员工头像（不选则按名字自动分配）" />
       </div>
       <div className="modal-foot">
-        <button className="btn btn-ghost btn-sm" onClick={closeModal}>
-          取消
-        </button>
-        <button
-          className="btn btn-dark btn-sm"
-          onClick={() => {
-            if (!name.trim()) return toast('请填写姓名');
-            createStaff({ name: name.trim(), positionId: pos, managerId });
-          }}
-        >
-          添加
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={closeModal}>取消</button>
+        <button className="btn btn-dark btn-sm" disabled={busy} onClick={() => {
+          if (!name.trim()) return toast('请填写姓名');
+          void submit(() => createStaff({ name: name.trim(), positionId: pos, managerId, avatar: avatar || undefined }));
+        }}>
+          {busy ? '添加中…' : '添加'}
         </button>
       </div>
     </>
@@ -366,20 +339,25 @@ function NewStaffModal({ positionId }: { positionId?: string }) {
 function DeleteStaffModal({ staffId }: { staffId: string }) {
   const { org, deleteStaff, closeModal } = useWorkbench();
   const s = org.staff.find(x => x.id === staffId);
+  const [reassignTo, setReassignTo] = useState('');
+  const { busy, submit } = useOrgSubmit();
 
   return (
     <>
       <div className="modal-body">
-        <div className="preview-box">
-          确认移除员工「<b>{s?.name}</b>」？
+        <div className="preview-box">确认移除员工「<b>{s?.name}</b>」？</div>
+        <div className="form-group" style={{ marginTop: '14px' }}>
+          <label className="form-label">未完成任务接手人（如有任务则必选）</label>
+          <select className="form-select" value={reassignTo} disabled={busy} onChange={event => setReassignTo(event.target.value)}>
+            <option value="">不指定；有未完成任务时取消操作</option>
+            {org.staff.filter(staff => staff.id !== staffId).map(staff => <option key={staff.id} value={staff.id}>{staff.name}</option>)}
+          </select>
         </div>
       </div>
       <div className="modal-foot">
-        <button className="btn btn-ghost btn-sm" onClick={closeModal}>
-          取消
-        </button>
-        <button className="btn btn-danger btn-sm" onClick={() => deleteStaff(staffId)}>
-          确认移除
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={closeModal}>取消</button>
+        <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => void submit(() => deleteStaff(staffId, reassignTo || undefined))}>
+          {busy ? '移除中…' : '确认移除'}
         </button>
       </div>
     </>
@@ -396,8 +374,6 @@ function NewTaskModal() {
   const [runDate, setRunDate] = useState('');
   const [weekDay, setWeekDay] = useState('1');
   const [monthDay, setMonthDay] = useState('1');
-  const enabledPositions = org.positions.filter(p => !p.root && p.enabled);
-  const [position, setPosition] = useState(enabledPositions[0]?.id ?? '');
 
   return (
     <>
@@ -450,12 +426,8 @@ function NewTaskModal() {
           <input className="form-input" type="time" value={time} onChange={e => setTime(e.target.value)} />
         </div>
         <div className="form-group">
-          <label className="form-label">负责岗位</label>
-          <select className="form-select" value={position} onChange={e => setPosition(e.target.value)}>
-            {enabledPositions.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          <label className="form-label">执行方式</label>
+          <div className="form-static">由总经理统一调度：拆分工单、派给合适的员工、汇总后交付。</div>
         </div>
       </div>
       <div className="modal-foot">
@@ -464,7 +436,7 @@ function NewTaskModal() {
           className="btn btn-dark btn-sm"
           onClick={() => {
             if (!name.trim()) return toast('请填写任务名称');
-            createTask({ title: name.trim(), freq, time: time || '09:00', position, runDate, weekDay, monthDay });
+            createTask({ title: name.trim(), freq, time: time || '09:00', runDate, weekDay, monthDay });
           }}
         >
           创建任务
@@ -491,173 +463,6 @@ function DeleteTaskModal({ taskId }: { taskId: string }) {
         </button>
         <button className="btn btn-danger btn-sm" onClick={() => deleteTask(taskId)}>
           确认删除
-        </button>
-      </div>
-    </>
-  );
-}
-
-/* ─────────── 人工审批 ─────────── */
-
-function DecideApprovalModal({ approvalId, decision }: { approvalId: string; decision: 'approved' | 'rejected' }) {
-  const { approvals, deliverables, decideApproval, closeModal, toast } = useWorkbench();
-  const approval = approvals.find(item => item.id === approvalId);
-  const project = deliverables.find(item => item.sourceId === approval?.project_id);
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const approved = decision === 'approved';
-
-  const submit = async () => {
-    if (!approved && !note.trim()) return toast('驳回时请填写返工意见');
-    setBusy(true);
-    try {
-      await decideApproval(approvalId, decision, note.trim());
-      closeModal();
-    } catch {
-      // store 已展示真实 API 错误，弹窗保留供修正后重试。
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <>
-      <div className="modal-body">
-        <div className="preview-box">
-          <h4>{approval?.title ?? '审批事项'}</h4>
-          <div style={{ fontSize: '11px', color: 'var(--muted)', margin: '4px 0 10px' }}>
-            {project?.title ?? approval?.project_id ?? '公司项目'} · {approval?.payload?.by ?? '公司岗位'}
-          </div>
-          <div>{approval?.payload?.summary ?? '该审批没有额外交付摘要，请结合项目任务结果验收。'}</div>
-          {approval?.payload?.summary?.includes('[simulated]') && (
-            <div style={{ fontSize: '11px', color: 'var(--amber)', marginTop: '10px' }}>
-              当前摘要来自后端模拟执行，没有真实模型成果可供核验。
-            </div>
-          )}
-        </div>
-        <div className="form-group" style={{ marginTop: '14px' }}>
-          <label className="form-label">审批意见{approved ? '（可选）' : '（返工要求，必填）'}</label>
-          <textarea
-            className="form-area"
-            value={note}
-            onChange={event => setNote(event.target.value)}
-            placeholder={approved ? '可填写验收说明' : '请说明需要修改的内容，任务将退回负责岗位返工'}
-          />
-        </div>
-        <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
-          {approved ? '批准后会自动调用项目执行接口；若还有后续审批，项目会停在下一节点。' : '驳回后任务退回待执行，并自动按你的意见重新执行。'}
-        </div>
-      </div>
-      <div className="modal-foot">
-        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={closeModal}>取消</button>
-        <button className={approved ? 'btn btn-dark btn-sm' : 'btn btn-danger btn-sm'} disabled={busy} onClick={() => void submit()}>
-          {busy ? '正在提交并执行…' : approved ? '批准并继续' : '确认驳回并返工'}
-        </button>
-      </div>
-    </>
-  );
-}
-
-/* ─────────── 交付物预览 / 删除 / 重试 ─────────── */
-
-function DeleteDeliverableModal({ deliverableId }: { deliverableId: string }) {
-  const { deliverables, deleteDeliverable, closeModal } = useWorkbench();
-  const d = deliverables.find(item => item.id === deliverableId);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    setBusy(true);
-    try {
-      await deleteDeliverable(deliverableId);
-    } catch {
-      // store 已展示真实 API 错误，弹窗保留供确认状态后重试。
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <>
-      <div className="modal-body">
-        <div className="preview-box">
-          确认删除项目「<b>{d?.title ?? deliverableId}</b>」？项目任务、审批记录和关联台账将一并删除，此操作不可撤销。商务订单项目需先走订单取消或归档流程。
-        </div>
-      </div>
-      <div className="modal-foot">
-        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={closeModal}>取消</button>
-        <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => void submit()}>
-          {busy ? '正在删除…' : '确认删除'}
-        </button>
-      </div>
-    </>
-  );
-}
-
-function PreviewDeliverableModal({ deliverableId }: { deliverableId: string }) {
-  const { deliverables, closeModal, openModal, toast, loadDeliverable, retryDeliverable, gwStatus } = useWorkbench();
-  const d = deliverables.find(x => x.id === deliverableId);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (d?.sourceId && !d.contentLoaded) void loadDeliverable(deliverableId);
-    // 项目状态变化后重新加载正文；contentLoaded 防止重复请求。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deliverableId, d?.contentLoaded, d?.rawStatus]);
-  if (!d) return null;
-
-  const retry = async () => {
-    setBusy(true);
-    try {
-      await retryDeliverable(deliverableId);
-    } catch {
-      // store 已展示真实 API 错误。
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <>
-      <div className="modal-body">
-        <div className="preview-box">
-          <h4>{d.title}</h4>
-          <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '12px' }}>
-            {d.type} · {d.client} · {d.time} · {d.status}
-          </div>
-          {gwStatus === 'ok' && d.contentLoaded && d.contentMode && d.contentMode !== 'live' && (
-            <div style={{ fontSize: '11px', color: 'var(--amber)', marginBottom: '12px' }}>
-              {d.contentMode === 'simulated'
-                ? '以下为后端模拟执行记录，不是真实模型生成的业务交付。'
-                : d.contentMode === 'mixed'
-                  ? '以下记录包含模拟或失败任务，请区分真实产出后再验收。'
-                  : '以下记录包含执行错误或加载失败，不代表有效业务交付。'}
-            </div>
-          )}
-          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.75 }}>
-            {gwStatus === 'ok'
-              ? d.contentLoaded
-                ? d.content
-                : d.status === '已交付'
-                  ? '正在从项目记录加载交付正文…'
-                  : '项目尚未交付，当前没有可预览正文。'
-              : d.content ?? '离线演示模式：连接 Gateway 后展示真实项目交付正文。'}
-          </div>
-        </div>
-      </div>
-      <div className="modal-foot">
-        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={closeModal}>关闭</button>
-        {gwStatus === 'ok' && d.sourceId && (
-          <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => openModal({ kind: 'delete-deliverable', deliverableId })}>
-            删除项目
-          </button>
-        )}
-        {gwStatus === 'ok' && d.sourceId && d.rawStatus === 'failed' && (
-          <button className="btn btn-dark btn-sm" disabled={busy} onClick={() => void retry()}>
-            {busy ? '正在重试…' : '重试失败任务'}
-          </button>
-        )}
-        <button className="btn btn-dark btn-sm" disabled={busy} onClick={() => toast('导出能力尚未接入；/api/export 已在统一客户端中预留')}>
-          导出 PDF
         </button>
       </div>
     </>

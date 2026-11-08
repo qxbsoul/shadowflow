@@ -1,17 +1,27 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { OrgState, Position, Staff } from '../types';
 import { AVATAR_PICKS } from '../data';
+import { getEmployeeConfigVersions, restoreEmployeeConfigVersion } from '../api';
+import type { EmployeeConfigVersionDto } from '../api';
 import { useWorkbench } from '../store';
+import AiOrgBuilder from './AiOrgBuilder';
+import EmployeeAvatar from './EmployeeAvatar';
+import AvatarPicker from './AvatarPicker';
+import { avatarIdFor, isAvatarId } from '../avatar-set';
 
 export default function OrgView() {
   const {
     org,
+    companyId,
+    refreshOrg,
+    apiSettings,
     selectedPosId,
     selectedStaffId,
     selectPosition,
     selectStaff,
     openModal,
   } = useWorkbench();
+  const [aiBuilderOpen, setAiBuilderOpen] = useState(false);
 
   const selectedPos = org.positions.find(p => p.id === selectedPosId) || null;
   const selectedStaff = org.staff.find(s => s.id === selectedStaffId) || null;
@@ -21,6 +31,9 @@ export default function OrgView() {
       <div className="view-head">
         <h2>组织架构</h2>
         <div className="actions">
+          <button className="btn btn-dark btn-sm" onClick={() => setAiBuilderOpen(true)}>
+            AI 建制
+          </button>
           <button className="btn btn-ghost btn-sm" onClick={() => openModal({ kind: 'new-dept' })}>
             新建部门
           </button>
@@ -37,7 +50,7 @@ export default function OrgView() {
         <div className="org-canvas">
           <div className="org-root-card">
             <button className="redit" onClick={() => selectPosition('p-ceo')}>
-              编辑岗位说明书
+              查看岗位说明书
             </button>
             <div className="tagline">公司负责人</div>
             <div className="rname">总经理 · AI 首席执行官</div>
@@ -84,6 +97,14 @@ export default function OrgView() {
           </div>
         </aside>
       </div>
+      {aiBuilderOpen && companyId && (
+        <AiOrgBuilder
+          companyId={companyId}
+          hasMimoKey={apiSettings.hasKey}
+          onClose={() => setAiBuilderOpen(false)}
+          onPublished={refreshOrg}
+        />
+      )}
     </div>
   );
 }
@@ -146,7 +167,7 @@ function DeptCard({
                 onClick={() => onSelectPosition(p.id)}
               >
                 <div className="pos-top">
-                  <span className="pos-avatar">{p.avatar}</span>
+                  <EmployeeAvatar avatar={p.avatar} name={p.name} size={30} dot />
                   <span className="pos-name">{p.name}</span>
                   <span className="pos-report">汇报 → {mgr ? mgr.name : '公司'}</span>
                 </div>
@@ -162,7 +183,7 @@ function DeptCard({
                           onSelectStaff(s.id);
                         }}
                       >
-                        <span className="sava">{s.avatar}</span>
+                        <EmployeeAvatar avatar={s.avatar} name={s.name} size={22} />
                         {s.name}
                       </span>
                     ))}
@@ -190,13 +211,26 @@ function DeptCard({
 /* ─────────── 岗位说明书（检查器） ─────────── */
 
 function PositionInspector({ position, org }: { position: Position; org: OrgState }) {
-  const { savePosition, openModal } = useWorkbench();
+  const { savePosition, openModal, toast } = useWorkbench();
   const [name, setName] = useState(position.name);
   const [deptId, setDeptId] = useState(position.deptId ?? org.departments[0]?.id ?? '');
   const [managerId, setManagerId] = useState(position.managerId ?? 'p-ceo');
   const [soul, setSoul] = useState(position.soul);
-  const [avatar, setAvatar] = useState(position.avatar);
+  const [avatar, setAvatar] = useState<string>(isAvatarId(position.avatar) ? position.avatar : avatarIdFor(position.name));
   const [enabled, setEnabled] = useState(position.enabled);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim()) return toast('请填写岗位名称');
+    setSaving(true);
+    try {
+      await savePosition(position.id, { name, deptId, managerId, soul, avatar, enabled });
+    } catch {
+      // store 已展示真实错误，保留当前编辑内容供重试。
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <>
@@ -209,11 +243,11 @@ function PositionInspector({ position, org }: { position: Position; org: OrgStat
       <div className="panel-pad">
         <div className="form-group">
           <label className="form-label">岗位名称</label>
-          <input className="form-input" value={name} onChange={e => setName(e.target.value)} />
+          <input className="form-input" value={name} disabled={position.root || saving} onChange={e => setName(e.target.value)} />
         </div>
         <div className="form-group">
           <label className="form-label">所属部门</label>
-          <select className="form-select" value={deptId} onChange={e => setDeptId(e.target.value)}>
+          <select className="form-select" value={deptId} disabled={position.root || saving} onChange={e => setDeptId(e.target.value)}>
             {org.departments.map(d => (
               <option key={d.id} value={d.id}>
                 {d.name}
@@ -228,7 +262,7 @@ function PositionInspector({ position, org }: { position: Position; org: OrgStat
               <option>— 公司负责人，无上级 —</option>
             </select>
           ) : (
-            <select className="form-select" value={managerId} onChange={e => setManagerId(e.target.value)}>
+            <select className="form-select" value={managerId} disabled={saving} onChange={e => setManagerId(e.target.value)}>
               {org.positions
                 .filter(x => x.id !== position.id && !x.root)
                 .map(x => (
@@ -242,44 +276,34 @@ function PositionInspector({ position, org }: { position: Position; org: OrgStat
         </div>
         <div className="form-group">
           <label className="form-label">职责提示词（岗位灵魂）</label>
-          <textarea className="form-area" value={soul} onChange={e => setSoul(e.target.value)} />
+          <textarea className="form-area" value={soul} disabled={position.root || saving} onChange={e => setSoul(e.target.value)} />
         </div>
-        <div className="form-group">
-          <label className="form-label">头像标记（单字）</label>
-          <div className="avatar-picks">
-            {AVATAR_PICKS.map(a => (
-              <button
-                key={a}
-                className={'avatar-pick' + (avatar === a ? ' selected' : '')}
-                onClick={() => setAvatar(a)}
-              >
-                {a}
-              </button>
-            ))}
-          </div>
-        </div>
+        <AvatarPicker
+          value={avatar}
+          onChange={setAvatar}
+          disabled={position.root || saving}
+          label="岗位头像"
+        />
         <div className="form-group switch-row">
           <label className="form-label" style={{ margin: 0 }}>
             启用该岗位
           </label>
-          <div className={enabled ? 'switch on' : 'switch'} onClick={() => setEnabled(!enabled)}>
+          <div className={enabled ? 'switch on' : 'switch'} onClick={() => { if (!position.root && !saving) setEnabled(!enabled); }}>
             <i />
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '9px', marginTop: '16px' }}>
-          <button
-            className="btn btn-dark btn-sm"
-            style={{ flex: 1 }}
-            onClick={() => savePosition(position.id, { name, deptId, managerId, soul, avatar, enabled })}
-          >
-            保存修改
-          </button>
-          {!position.root && (
-            <button className="btn btn-danger btn-sm" onClick={() => openModal({ kind: 'delete-position', positionId: position.id })}>
+        {position.root ? (
+          <div className="empty-tip">总经理由系统管理，此说明书仅供查看。</div>
+        ) : (
+          <div style={{ display: 'flex', gap: '9px', marginTop: '16px' }}>
+            <button className="btn btn-dark btn-sm" style={{ flex: 1 }} disabled={saving} onClick={() => void submit()}>
+              {saving ? '保存中…' : '保存修改'}
+            </button>
+            <button className="btn btn-danger btn-sm" disabled={saving} onClick={() => openModal({ kind: 'delete-position', positionId: position.id })}>
               删除岗位
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </>
   );
@@ -288,28 +312,47 @@ function PositionInspector({ position, org }: { position: Position; org: OrgStat
 /* ─────────── 员工档案（检查器） ─────────── */
 
 function StaffInspector({ staff, org }: { staff: Staff; org: OrgState }) {
-  const { saveStaff, openModal } = useWorkbench();
+  const { saveStaff, openModal, toast } = useWorkbench();
   const [name, setName] = useState(staff.name);
   const [positionId, setPositionId] = useState(staff.positionId);
   const [managerId, setManagerId] = useState(staff.managerId ?? 'p-ceo');
-  const pos = org.positions.find(p => p.id === staff.positionId);
+  const [skills, setSkills] = useState(staff.skills.join(', '));
+  const [tools, setTools] = useState(staff.tools.join(', '));
+  const [avatar, setAvatar] = useState<string>(isAvatarId(staff.avatar) ? staff.avatar : avatarIdFor(staff.name));
+  const [saving, setSaving] = useState(false);
+  const pos = org.positions.find(p => p.id === positionId);
+  const parseList = (value: string) => [...new Set(value.split(/[,，]/).map(item => item.trim()).filter(Boolean))];
+
+  const submit = async () => {
+    if (!name.trim()) return toast('请填写姓名');
+    setSaving(true);
+    try {
+      await saveStaff(staff.id, { name, positionId, managerId, skills: parseList(skills), tools: parseList(tools), avatar });
+    } catch {
+      // store 已展示真实错误，保留当前编辑内容供重试。
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <>
       <div className="insp-head">
         <div className="kind">员工档案</div>
         <h3>
-          {staff.avatar} · {staff.name}
+          <EmployeeAvatar avatar={staff.avatar} name={staff.name} size={30} />
+          <span>{staff.name}</span>
         </h3>
       </div>
       <div className="panel-pad">
+        <AvatarPicker value={avatar} onChange={setAvatar} disabled={saving} label="员工头像" />
         <div className="form-group">
           <label className="form-label">姓名</label>
-          <input className="form-input" value={name} onChange={e => setName(e.target.value)} />
+          <input className="form-input" value={name} disabled={saving} onChange={e => setName(e.target.value)} />
         </div>
         <div className="form-group">
           <label className="form-label">所属岗位</label>
-          <select className="form-select" value={positionId} onChange={e => setPositionId(e.target.value)}>
+          <select className="form-select" value={positionId} disabled={saving} onChange={e => setPositionId(e.target.value)}>
             {org.positions
               .filter(p => !p.root)
               .map(p => (
@@ -321,7 +364,7 @@ function StaffInspector({ staff, org }: { staff: Staff; org: OrgState }) {
         </div>
         <div className="form-group">
           <label className="form-label">汇报对象（岗位）</label>
-          <select className="form-select" value={managerId} onChange={e => setManagerId(e.target.value)}>
+          <select className="form-select" value={managerId} disabled={saving} onChange={e => setManagerId(e.target.value)}>
             {org.positions
               .filter(p => !p.root && p.id !== staff.positionId)
               .map(p => (
@@ -333,24 +376,111 @@ function StaffInspector({ staff, org }: { staff: Staff; org: OrgState }) {
           </select>
         </div>
         <div className="form-group">
+          <label className="form-label">技能（逗号分隔）</label>
+          <input className="form-input" value={skills} disabled={saving} placeholder="市场研究, 数据分析" onChange={e => setSkills(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">工具权限（逗号分隔）</label>
+          <input className="form-input" value={tools} disabled={saving} placeholder="web_search, knowledge_search" onChange={e => setTools(e.target.value)} />
+        </div>
+        <div className="form-group">
           <label className="form-label">当前岗位职责</label>
           <div className="preview-box" style={{ fontSize: '11.5px' }}>
             {pos ? pos.soul : '—'}
           </div>
         </div>
+        <EmployeeConfigVersions employeeId={staff.id} />
         <div style={{ display: 'flex', gap: '9px', marginTop: '16px' }}>
-          <button
-            className="btn btn-dark btn-sm"
-            style={{ flex: 1 }}
-            onClick={() => saveStaff(staff.id, { name, positionId, managerId })}
-          >
-            保存修改
+          <button className="btn btn-dark btn-sm" style={{ flex: 1 }} disabled={saving} onClick={() => void submit()}>
+            {saving ? '保存中…' : '保存修改'}
           </button>
-          <button className="btn btn-danger btn-sm" onClick={() => openModal({ kind: 'delete-staff', staffId: staff.id })}>
+          <button className="btn btn-danger btn-sm" disabled={saving} onClick={() => openModal({ kind: 'delete-staff', staffId: staff.id })}>
             删除员工
           </button>
         </div>
       </div>
     </>
+  );
+}
+
+function EmployeeConfigVersions({ employeeId }: { employeeId: string }) {
+  const { companyId, refreshOrg, toast } = useWorkbench();
+  const [open, setOpen] = useState(false);
+  const [versions, setVersions] = useState<EmployeeConfigVersionDto[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [restoring, setRestoring] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
+
+  const load = async () => {
+    if (!companyId) return;
+    setLoading(true);
+    try {
+      const items = await getEmployeeConfigVersions(companyId, employeeId);
+      setVersions(items);
+      setSelected(current => current ?? items[0]?.version ?? null);
+    } catch (error) {
+      toast(`配置版本加载失败：${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (open) void load();
+    // 仅在展开或切换员工时读取，避免组织轮询造成额外请求。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, employeeId, companyId]);
+
+  const restore = async (version: number) => {
+    if (!companyId) return;
+    setRestoring(version);
+    try {
+      const result = await restoreEmployeeConfigVersion(companyId, employeeId, version);
+      await refreshOrg();
+      await load();
+      setSelected(result.version.version);
+      toast(`已恢复 v${version}，并保存为 v${result.version.version}`);
+    } catch (error) {
+      toast(`配置恢复失败：${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setRestoring(null);
+    }
+  };
+
+  const current = versions.find(item => item.version === selected) ?? versions[0];
+  return (
+    <div className="config-versions">
+      <button className="btn btn-ghost btn-sm" disabled={loading} onClick={() => setOpen(value => !value)}>
+        {loading ? '读取版本中…' : open ? '收起配置版本' : '查看配置版本'}
+      </button>
+      {open && (
+        <div className="config-version-panel">
+          {!versions.length && !loading ? <div className="empty-tip">暂无可查看的配置版本。</div> : (
+            <>
+              <div className="config-version-list">
+                {versions.map(item => (
+                  <button key={item.id} className={current?.id === item.id ? 'active' : ''} onClick={() => setSelected(item.version)}>
+                    <strong>v{item.version}</strong><span>{item.source}</span>
+                  </button>
+                ))}
+              </div>
+              {current && <div className="config-version-detail">
+                <div className="audit-meta">v{current.version} · {current.source} · {new Date(current.created_at).toLocaleString()}</div>
+                <dl>
+                  <dt>职责</dt><dd>{current.config.system_prompt || '—'}</dd>
+                  <dt>模型</dt><dd>{current.config.model_name || '—'}</dd>
+                  <dt>Skills</dt><dd>{current.config.skills?.join('、') || '—'}</dd>
+                  <dt>Tools</dt><dd>{current.config.tools?.join('、') || '—'}</dd>
+                  <dt>Manager</dt><dd>{current.config.manager_id || '—'}</dd>
+                </dl>
+                <button className="btn btn-dark btn-sm" disabled={restoring !== null} onClick={() => void restore(current.version)}>
+                  {restoring === current.version ? '恢复中…' : `恢复为 v${current.version}（生成新版本）`}
+                </button>
+              </div>}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
